@@ -1,92 +1,89 @@
-// Load environment variables
-require('dotenv').config()
+require("dotenv").config();
 
-const express = require("express")
-const cors = require("cors")
-const multer = require("multer")
-const fs = require("fs")
-const path = require("path")
-const { MongoClient } = require("mongodb")
+const express = require("express");
+const cors = require("cors");
+const { MongoClient } = require("mongodb");
 
-// Config
-const PORT = process.env.PORT || 5000
-const MONGO_URI = process.env.MONGO_URI
-const DB_NAME = "productDB" // ← updated database name
+// ================= CONFIG =================
+const PORT = process.env.PORT || 5000;
+const MONGO_URI = process.env.MONGO_URI;
+const DB_NAME = "productDB";
 
-// Express app
-const app = express()
-app.use(cors())
-app.use(express.json())
-app.use("/uploads", express.static("uploads"))
+// ================= EXPRESS APP =================
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-// Ensure uploads folder exists
-if (!fs.existsSync("uploads")) fs.mkdirSync("uploads")
-
-// Multer setup for image uploads
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, "uploads/"),
-    filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + path.extname(file.originalname)
-        cb(null, file.fieldname + "-" + uniqueSuffix)
-    }
-})
-const upload = multer({ storage })
-
-// MongoDB client (persistent connection)
-const client = new MongoClient(MONGO_URI)
-let db
+// ================= MONGODB CONNECTION =================
+const client = new MongoClient(MONGO_URI);
+let db;
 
 async function connectDB() {
-    try {
-        await client.connect()
-        db = client.db(DB_NAME)
-        console.log("Connected to MongoDB:", DB_NAME)
-    } catch (err) {
-        console.error("MongoDB connection error:", err)
+    if (!db) {
+        await client.connect();
+        db = client.db(DB_NAME);
+        console.log("✅ Connected to MongoDB:", DB_NAME);
     }
+    return db;
 }
-connectDB()
 
-// Routes
+// ================= ROUTES =================
 
-// POST /products → add product
-app.post("/products", upload.single("image"), async (req, res) => {
+// Root
+app.get("/", (req, res) => {
+    res.send("🚀 API is running! Use /products to GET or POST products");
+});
+
+// Add new product (no image)
+app.post("/products", async (req, res) => {
     try {
-        const collection = db.collection("products") // collection name remains "products"
-        const { name, price, description } = req.body
-        const image = req.file ? req.file.filename : null
+        const database = await connectDB();
+        const collection = database.collection("products");
 
-        const newProduct = { name, price: parseFloat(price), description, image }
-        await collection.insertOne(newProduct)
+        const { name, price, description } = req.body;
 
-        res.status(201).json({ message: "Product added successfully", product: newProduct })
+        if (!name || !price) {
+            return res.status(400).json({ message: "Name and price are required" });
+        }
+
+        const newProduct = {
+            name,
+            price: parseFloat(price),
+            description: description || "",
+            createdAt: new Date(),
+        };
+
+        await collection.insertOne(newProduct);
+        res.status(201).json({ message: "Product added successfully", product: newProduct });
     } catch (err) {
-        console.error(err)
-        res.status(500).json({ message: "Failed to add product" })
+        console.error(err);
+        res.status(500).json({ message: "Failed to add product" });
     }
-})
+});
 
-// GET /products → list all products
+// Get all products
 app.get("/products", async (req, res) => {
     try {
-        const collection = db.collection("products")
-        const products = await collection.find({}).toArray()
-        res.status(200).json(products)
+        const database = await connectDB();
+        const collection = database.collection("products");
+        const products = await collection.find({}).sort({ createdAt: -1 }).toArray();
+        res.status(200).json(products);
     } catch (err) {
-        console.error(err)
-        res.status(500).json({ message: "Failed to fetch products" })
+        console.error(err);
+        res.status(500).json({ message: "Failed to fetch products" });
     }
-})
+});
 
-// GET /ping → test connection
+// Ping MongoDB
 app.get("/ping", async (req, res) => {
     try {
-        await db.command({ ping: 1 })
-        res.send("Pinged MongoDB successfully!")
+        const database = await connectDB();
+        await database.command({ ping: 1 });
+        res.send("✅ Pinged MongoDB successfully!");
     } catch (err) {
-        res.status(500).send("MongoDB connection failed")
+        res.status(500).send("❌ MongoDB connection failed");
     }
-})
+});
 
 // Start server
-app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`))
+app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
